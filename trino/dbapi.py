@@ -223,6 +223,7 @@ class Cursor(object):
         self.arraysize = 1
         self._iterator = None
         self._query = None
+        self._dict_iter = False
 
     def __iter__(self):
         return self._iterator
@@ -271,6 +272,15 @@ class Cursor(object):
             return self._query.warnings
         return None
 
+    @property
+    def dict_iter(self):
+        return self._dict_iter
+
+    @dict_iter.setter
+    def dict_iter(self, dict_iter_enabled):
+        """Rows returned from the server will come back as dicts when enabled"""
+        self._dict_iter = dict_iter_enabled
+
     def setinputsizes(self, sizes):
         raise trino.exceptions.NotSupportedError
 
@@ -300,7 +310,7 @@ class Cursor(object):
 
         # Send prepare statement. Copy the _request object to avoid poluting the
         # one that is going to be used to execute the actual operation.
-        query = trino.client.TrinoQuery(copy.deepcopy(self._request), sql=sql)
+        query = trino.client.TrinoQuery(copy.deepcopy(self._request), sql=sql, dict_iter=self._dict_iter)
         result = query.execute()
 
         # Iterate until the 'X-Trino-Added-Prepare' header is found or
@@ -322,7 +332,7 @@ class Cursor(object):
 
         # No need to deepcopy _request here because this is the actual request
         # operation
-        return trino.client.TrinoQuery(self._request, sql=sql)
+        return trino.client.TrinoQuery(self._request, sql=sql, dict_iter=self._dict_iter)
 
     def _format_prepared_param(self, param):
         """
@@ -381,7 +391,7 @@ class Cursor(object):
 
         # Send deallocate statement. Copy the _request object to avoid poluting the
         # one that is going to be used to execute the actual operation.
-        query = trino.client.TrinoQuery(copy.deepcopy(self._request), sql=sql)
+        query = trino.client.TrinoQuery(copy.deepcopy(self._request), sql=sql, dict_iter=self._dict_iter)
         result = query.execute(
             additional_http_headers={
                 constants.HEADER_PREPARED_STATEMENT: added_prepare_header
@@ -432,7 +442,7 @@ class Cursor(object):
                 self._deallocate_prepare_statement(added_prepare_header, statement_name)
 
         else:
-            self._query = trino.client.TrinoQuery(self._request, sql=operation)
+            self._query = trino.client.TrinoQuery(self._request, sql=operation, dict_iter=self._dict_iter)
             result = self._query.execute()
         self._iterator = iter(result)
         return result

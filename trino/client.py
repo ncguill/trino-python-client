@@ -440,16 +440,51 @@ class TrinoResult(object):
         self._query = query
         self._rows = rows or []
         self._rownumber = 0
+        self._col_names = []
 
     @property
     def rownumber(self) -> int:
         return self._rownumber
 
+    def _recursive_row_to_dict(self, args, values):
+        if values is not None:
+            col_names = [col['value']['fieldName']['name'] for col in args]
+            rrow = dict(zip(col_names, values))
+        
+            for arg in args:
+                if arg['value']['typeSignature']['rawType'] == "row":
+                    rrow[arg['value']['fieldName']['name']] = self._recursive_row_to_dict(
+                        arg['value']['typeSignature']['arguments'],
+                        rrow[arg['value']['fieldName']['name']])
+        else:
+            rrow = None
+    
+        return rrow
+
+    def _row_to_dict(self, row):
+        if len(self._col_names) == 0:
+            self._col_names = [col['name'] for col in self._query.columns]
+            
+        rrow = dict(zip(self._col_names, row))
+    
+        for col in self._query.columns:
+            if col['typeSignature']['rawType'] == "row":
+                rrow[col['name']] = self._recursive_row_to_dict(
+                    col['typeSignature']['arguments'],
+                    rrow[col['name']])
+    
+        return rrow
+
     def __iter__(self):
         # Initial fetch from the first POST request
         for row in self._rows:
             self._rownumber += 1
-            yield row
+            
+            if self._query.dict_iter:
+                yield self._row_to_dict(row)
+            else:
+                yield row
+                
         self._rows = None
 
         # Subsequent fetches from GET requests until next_uri is empty.
@@ -458,7 +493,11 @@ class TrinoResult(object):
             for row in rows:
                 self._rownumber += 1
                 logger.debug("row %s", row)
-                yield row
+                
+                if self._query.dict_iter:
+                    yield self._row_to_dict(row)
+                else:
+                    yield row
 
     @property
     def response_headers(self):
@@ -472,6 +511,7 @@ class TrinoQuery(object):
         self,
         request: TrinoRequest,
         sql: str,
+        dict_iter = False
     ) -> None:
         self.query_id: Optional[str] = None
 
@@ -485,6 +525,7 @@ class TrinoQuery(object):
         self._sql = sql
         self._result = TrinoResult(self)
         self._response_headers = None
+        self._dict_iter = dict_iter
 
     @property
     def columns(self):
@@ -510,6 +551,10 @@ class TrinoQuery(object):
     @property
     def info_uri(self):
         return self._info_uri
+
+    @property
+    def dict_iter(self):
+        return self._dict_iter
 
     def execute(self, additional_http_headers=None) -> TrinoResult:
         """Initiate a Trino query by sending the SQL statement
